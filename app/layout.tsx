@@ -7,8 +7,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: '9-Grid Image Splitter',
-  description: 'Upload any image and split it into 9 equal parts. Download individual panels or the complete grid.',
+  title: 'Image Grid Splitter',
+  description: 'Upload any image and auto-detect grid from separator lines, or split into equal parts. Supports any grid size.',
   generator: 'v0.app',
   icons: {
     icon: [
