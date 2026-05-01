@@ -33,6 +33,7 @@ export default function ImageSplitter() {
   const [gridInfo, setGridInfo] = useState<GridInfo>({ rows: 3, cols: 3, rowBounds: [], colBounds: [] })
   const [showResult, setShowResult] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copiedPanel, setCopiedPanel] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resultRef = useRef<HTMLDivElement>(null)
 
@@ -406,6 +407,24 @@ export default function ImageSplitter() {
     })
   }
 
+  const copyToClipboard = useCallback(async (dataUrl: string, panelIdx?: number) => {
+    try {
+      const response = await fetch(dataUrl)
+      const blob = await response.blob()
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob }),
+      ])
+      if (panelIdx !== undefined) {
+        setCopiedPanel(panelIdx)
+        setTimeout(() => setCopiedPanel(null), 2000)
+      }
+      return true
+    } catch (err) {
+      console.error("Failed to copy to clipboard:", err)
+      return false
+    }
+  }, [])
+
   const copyAllToClipboard = useCallback(async () => {
     if (!cells.length) return
 
@@ -541,6 +560,7 @@ export default function ImageSplitter() {
     setShowResult(false)
     setCells([])
     setCopied(false)
+    setCopiedPanel(null)
     setGridInfo({ rows: 3, cols: 3, rowBounds: [], colBounds: [] })
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -690,6 +710,17 @@ export default function ImageSplitter() {
                       <Crop className="w-3 h-3" />
                     </button>
                     <button
+                      onClick={() => copyToClipboard(cell.dataUrl, cell.idx)}
+                      title="Copy to clipboard"
+                      className={`border text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-2 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all flex items-center gap-1 ${
+                        copiedPanel === cell.idx
+                          ? "bg-green-600 text-foreground border-green-600"
+                          : "bg-btn-secondary border-btn-secondary-border text-muted-foreground/70 hover:bg-foreground hover:text-background hover:border-foreground"
+                      }`}
+                    >
+                      {copiedPanel === cell.idx ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                    <button
                       onClick={() =>
                         downloadDataUrl(cell.dataUrl, `panel_${cell.idx + 1}.png`)
                       }
@@ -710,6 +741,20 @@ export default function ImageSplitter() {
             >
               <Download className="w-4 h-4" />
               Download All {cells.length}
+            </button>
+            <button
+              onClick={async () => {
+                for (let i = 0; i < cells.length; i++) {
+                  await copyToClipboard(cells[i].dataUrl, cells[i].idx)
+                  if (i < cells.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 300))
+                  }
+                }
+              }}
+              className="py-3 px-6 rounded-lg text-[0.75rem] tracking-[0.15em] uppercase cursor-pointer font-sans transition-all hover:-translate-y-0.5 hover:opacity-90 bg-foreground text-background font-semibold flex items-center gap-2"
+            >
+              <Copy className="w-4 h-4" />
+              Copy All {cells.length}
             </button>
             <button
               onClick={downloadComposite}
