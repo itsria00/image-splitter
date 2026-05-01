@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Upload, Download, RotateCcw } from "lucide-react"
+import { Upload, Download, RotateCcw, Copy, Check, Crop } from "lucide-react"
 
 interface CellData {
   dataUrl: string
@@ -32,6 +32,7 @@ export default function ImageSplitter() {
   const [cells, setCells] = useState<CellData[]>([])
   const [gridInfo, setGridInfo] = useState<GridInfo>({ rows: 3, cols: 3, rowBounds: [], colBounds: [] })
   const [showResult, setShowResult] = useState(false)
+  const [copied, setCopied] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resultRef = useRef<HTMLDivElement>(null)
 
@@ -332,6 +333,71 @@ export default function ImageSplitter() {
     a.click()
   }
 
+  const cropWhitespace = useCallback((cellIdx: number) => {
+    const cell = cells.find(c => c.idx === cellIdx)
+    if (!cell) return
+
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext("2d")!
+      ctx.drawImage(img, 0, 0)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const data = imageData.data
+      const width = canvas.width
+      const height = canvas.height
+
+      // Threshold for considering a pixel as "light/white"
+      const LIGHT_THRESHOLD = 240
+
+      const isLight = (x: number, y: number) => {
+        const i = (y * width + x) * 4
+        return data[i] > LIGHT_THRESHOLD && data[i + 1] > LIGHT_THRESHOLD && data[i + 2] > LIGHT_THRESHOLD
+      }
+
+      const rowLight = (y: number) => {
+        for (let x = 0; x < width; x++) if (!isLight(x, y)) return false
+        return true
+      }
+
+      const colLight = (x: number) => {
+        for (let y = 0; y < height; y++) if (!isLight(x, y)) return false
+        return true
+      }
+
+      let t = 0, b = height - 1, l = 0, r = width - 1
+      while (t < b && rowLight(t)) t++
+      while (b > t && rowLight(b)) b--
+      while (l < r && colLight(l)) l++
+      while (r > l && colLight(r)) r--
+
+      // If no cropping needed (no whitespace found), return early
+      if (t === 0 && b === height - 1 && l === 0 && r === width - 1) return
+
+      const newWidth = r - l + 1
+      const newHeight = b - t + 1
+
+      const croppedCanvas = document.createElement("canvas")
+      croppedCanvas.width = newWidth
+      croppedCanvas.height = newHeight
+      croppedCanvas.getContext("2d")!.drawImage(
+        canvas, l, t, newWidth, newHeight, 0, 0, newWidth, newHeight
+      )
+
+      const newDataUrl = croppedCanvas.toDataURL("image/png")
+      
+      setCells(prevCells => 
+        prevCells.map(c => 
+          c.idx === cellIdx ? { ...c, dataUrl: newDataUrl } : c
+        )
+      )
+    }
+    img.src = cell.dataUrl
+  }, [cells])
+
   const downloadAll = () => {
     cells.forEach((cell, i) => {
       setTimeout(() => {
@@ -339,6 +405,97 @@ export default function ImageSplitter() {
       }, i * 250)
     })
   }
+
+  const copyAllToClipboard = useCallback(async () => {
+    if (!cells.length) return
+
+    try {
+      // Convert all data URLs to blobs
+      const blobs = await Promise.all(
+        cells.map(async (cell) => {
+          const response = await fetch(cell.dataUrl)
+          return response.blob()
+        })
+      )
+
+      // Create clipboard items for each image
+      const clipboardItems = blobs.map(
+        (blob) => new ClipboardItem({ [blob.type]: blob })
+      )
+
+      // Note: Most browsers only support writing one item at a time
+      // So we'll copy just the first image and show a message
+      // For full support, we create a composite image instead
+      
+      // Create a composite canvas with all images
+      const firstImg = new Image()
+      firstImg.crossOrigin = "anonymous"
+      
+      await new Promise<void>((resolve) => {
+        firstImg.onload = async () => {
+          const cw = firstImg.width
+          const ch = firstImg.height
+          const L = 4
+          const comp = document.createElement("canvas")
+          comp.width = cw * gridInfo.cols + L * (gridInfo.cols - 1)
+          comp.height = ch * gridInfo.rows + L * (gridInfo.rows - 1)
+          const ctx = comp.getContext("2d")!
+          ctx.fillStyle = "#111"
+          ctx.fillRect(0, 0, comp.width, comp.height)
+
+          let loaded = 0
+          await Promise.all(
+            cells.map(
+              (cell) =>
+                new Promise<void>((imgResolve) => {
+                  const cellImg = new Image()
+                  cellImg.crossOrigin = "anonymous"
+                  cellImg.onload = () => {
+                    ctx.drawImage(
+                      cellImg,
+                      cell.col * (cw + L),
+                      cell.row * (ch + L),
+                      cw,
+                      ch
+                    )
+                    loaded++
+                    imgResolve()
+                  }
+                  cellImg.src = cell.dataUrl
+                })
+            )
+          )
+
+          // Convert canvas to blob and copy to clipboard
+          comp.toBlob(async (blob) => {
+            if (blob) {
+              await navigator.clipboard.write([
+                new ClipboardItem({ [blob.type]: blob }),
+              ])
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
+            }
+            resolve()
+          }, "image/png")
+        }
+        firstImg.src = cells[0].dataUrl
+      })
+    } catch (err) {
+      console.error("Failed to copy to clipboard:", err)
+      // Fallback: try to copy just the first image
+      try {
+        const response = await fetch(cells[0].dataUrl)
+        const blob = await response.blob()
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob }),
+        ])
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch (fallbackErr) {
+        console.error("Fallback copy also failed:", fallbackErr)
+      }
+    }
+  }, [cells, gridInfo])
 
   const downloadComposite = useCallback(() => {
     if (!cells.length) return
@@ -383,6 +540,7 @@ export default function ImageSplitter() {
   const reset = () => {
     setShowResult(false)
     setCells([])
+    setCopied(false)
     setGridInfo({ rows: 3, cols: 3, rowBounds: [], colBounds: [] })
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -523,14 +681,23 @@ export default function ImageSplitter() {
                     </strong>
                     {getLabel(cell.row, cell.col, gridInfo.rows, gridInfo.cols)[1]}
                   </div>
-                  <button
-                    onClick={() =>
-                      downloadDataUrl(cell.dataUrl, `panel_${cell.idx + 1}.png`)
-                    }
-                    className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-3 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground"
-                  >
-                    ↓ Save
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cropWhitespace(cell.idx)}
+                      title="Auto-crop whitespace"
+                      className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-2 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground flex items-center gap-1"
+                    >
+                      <Crop className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() =>
+                        downloadDataUrl(cell.dataUrl, `panel_${cell.idx + 1}.png`)
+                      }
+                      className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-3 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground"
+                    >
+                      ↓ Save
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -550,6 +717,17 @@ export default function ImageSplitter() {
             >
               <Download className="w-4 h-4" />
               Download Grid
+            </button>
+            <button
+              onClick={copyAllToClipboard}
+              className={`py-3 px-6 rounded-lg text-[0.75rem] tracking-[0.15em] uppercase cursor-pointer font-sans transition-all hover:-translate-y-0.5 hover:opacity-90 border flex items-center gap-2 ${
+                copied 
+                  ? "bg-green-600 text-foreground border-green-600" 
+                  : "bg-btn-tertiary text-muted-foreground border-btn-tertiary-border"
+              }`}
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {copied ? "Copied!" : "Copy Grid"}
             </button>
             <button
               onClick={reset}
