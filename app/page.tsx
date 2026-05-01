@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Upload, Download, RotateCcw, Copy, Check, Crop } from "lucide-react"
+import { Upload, Download, RotateCcw, Copy, Check, Crop, Archive } from "lucide-react"
+import JSZip from "jszip"
 
 interface CellData {
   dataUrl: string
@@ -424,6 +425,30 @@ export default function ImageSplitter() {
     })
   }
 
+  const downloadAllAsZip = useCallback(async () => {
+    if (!cells.length) return
+
+    const zip = new JSZip()
+    
+    // Convert all data URLs to blobs and add to zip
+    await Promise.all(
+      cells.map(async (cell) => {
+        const response = await fetch(cell.dataUrl)
+        const blob = await response.blob()
+        zip.file(`panel_${cell.idx + 1}.png`, blob)
+      })
+    )
+
+    // Generate and download zip
+    const zipBlob = await zip.generateAsync({ type: "blob" })
+    const url = URL.createObjectURL(zipBlob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "panels.zip"
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [cells])
+
   const copyToClipboard = useCallback(async (dataUrl: string, panelIdx?: number) => {
     try {
       const response = await fetch(dataUrl)
@@ -446,7 +471,7 @@ export default function ImageSplitter() {
     if (!cells.length) return
 
     try {
-      // Convert all images to blobs simultaneously
+      // Convert all data URLs to blobs simultaneously
       const blobs = await Promise.all(
         cells.map(async (cell) => {
           const response = await fetch(cell.dataUrl)
@@ -454,22 +479,19 @@ export default function ImageSplitter() {
         })
       )
 
-      // Create HTML with all images embedded - this allows pasting multiple images
-      const htmlContent = cells
-        .map((cell, i) => `<img src="${cell.dataUrl}" alt="Panel ${i + 1}" />`)
-        .join('\n')
+      // Create multiple ClipboardItems - one per image
+      const clipboardItems = blobs.map(
+        (blob) => new ClipboardItem({ "image/png": blob })
+      )
 
-      // Create a ClipboardItem with both HTML and the first image as fallback
-      const clipboardItem = new ClipboardItem({
-        'text/html': new Blob([htmlContent], { type: 'text/html' }),
-        'image/png': blobs[0]
-      })
-
-      await navigator.clipboard.write([clipboardItem])
+      // Write all items to clipboard at once
+      await navigator.clipboard.write(clipboardItems)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error("Failed to copy to clipboard:", err)
+      console.error("Failed to copy all to clipboard:", err)
+      // If multi-item fails, show error - don't silently fall back
+      alert("Your browser doesn't support copying multiple images. Use 'Download ZIP' instead.")
     }
   }, [cells])
 
@@ -711,18 +733,11 @@ export default function ImageSplitter() {
               {copied ? "Copied!" : "Copy All"}
             </button>
             <button
-              onClick={downloadAll}
-              className="py-3 px-6 rounded-lg text-[0.75rem] tracking-[0.15em] uppercase cursor-pointer font-sans transition-all hover:-translate-y-0.5 hover:opacity-90 bg-btn-tertiary text-muted-foreground border border-btn-tertiary-border flex items-center gap-2"
+              onClick={downloadAllAsZip}
+              className="py-3 px-6 rounded-lg text-[0.75rem] tracking-[0.15em] uppercase cursor-pointer font-sans transition-all hover:-translate-y-0.5 hover:opacity-90 bg-foreground text-background font-semibold flex items-center gap-2"
             >
-              <Download className="w-4 h-4" />
-              Download All
-            </button>
-            <button
-              onClick={downloadComposite}
-              className="py-3 px-6 rounded-lg text-[0.75rem] tracking-[0.15em] uppercase cursor-pointer font-sans transition-all hover:-translate-y-0.5 hover:opacity-90 bg-btn-tertiary text-muted-foreground border border-btn-tertiary-border flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Download Grid
+              <Archive className="w-4 h-4" />
+              Download ZIP
             </button>
             <button
               onClick={reset}
