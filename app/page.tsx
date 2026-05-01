@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from "react"
-import { Upload, Download, RotateCcw, Copy, Check } from "lucide-react"
+import { Upload, Download, RotateCcw, Copy, Check, Crop } from "lucide-react"
 
 interface CellData {
   dataUrl: string
@@ -333,6 +333,71 @@ export default function ImageSplitter() {
     a.click()
   }
 
+  const cropWhitespace = useCallback((cellIdx: number) => {
+    const cell = cells.find(c => c.idx === cellIdx)
+    if (!cell) return
+
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext("2d")!
+      ctx.drawImage(img, 0, 0)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const data = imageData.data
+      const width = canvas.width
+      const height = canvas.height
+
+      // Threshold for considering a pixel as "light/white"
+      const LIGHT_THRESHOLD = 240
+
+      const isLight = (x: number, y: number) => {
+        const i = (y * width + x) * 4
+        return data[i] > LIGHT_THRESHOLD && data[i + 1] > LIGHT_THRESHOLD && data[i + 2] > LIGHT_THRESHOLD
+      }
+
+      const rowLight = (y: number) => {
+        for (let x = 0; x < width; x++) if (!isLight(x, y)) return false
+        return true
+      }
+
+      const colLight = (x: number) => {
+        for (let y = 0; y < height; y++) if (!isLight(x, y)) return false
+        return true
+      }
+
+      let t = 0, b = height - 1, l = 0, r = width - 1
+      while (t < b && rowLight(t)) t++
+      while (b > t && rowLight(b)) b--
+      while (l < r && colLight(l)) l++
+      while (r > l && colLight(r)) r--
+
+      // If no cropping needed (no whitespace found), return early
+      if (t === 0 && b === height - 1 && l === 0 && r === width - 1) return
+
+      const newWidth = r - l + 1
+      const newHeight = b - t + 1
+
+      const croppedCanvas = document.createElement("canvas")
+      croppedCanvas.width = newWidth
+      croppedCanvas.height = newHeight
+      croppedCanvas.getContext("2d")!.drawImage(
+        canvas, l, t, newWidth, newHeight, 0, 0, newWidth, newHeight
+      )
+
+      const newDataUrl = croppedCanvas.toDataURL("image/png")
+      
+      setCells(prevCells => 
+        prevCells.map(c => 
+          c.idx === cellIdx ? { ...c, dataUrl: newDataUrl } : c
+        )
+      )
+    }
+    img.src = cell.dataUrl
+  }, [cells])
+
   const downloadAll = () => {
     cells.forEach((cell, i) => {
       setTimeout(() => {
@@ -616,14 +681,23 @@ export default function ImageSplitter() {
                     </strong>
                     {getLabel(cell.row, cell.col, gridInfo.rows, gridInfo.cols)[1]}
                   </div>
-                  <button
-                    onClick={() =>
-                      downloadDataUrl(cell.dataUrl, `panel_${cell.idx + 1}.png`)
-                    }
-                    className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-3 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground"
-                  >
-                    ↓ Save
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cropWhitespace(cell.idx)}
+                      title="Auto-crop whitespace"
+                      className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-2 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground flex items-center gap-1"
+                    >
+                      <Crop className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() =>
+                        downloadDataUrl(cell.dataUrl, `panel_${cell.idx + 1}.png`)
+                      }
+                      className="bg-btn-secondary border border-btn-secondary-border text-muted-foreground/70 text-[0.62rem] tracking-[0.15em] uppercase py-1.5 px-3 rounded-md cursor-pointer font-sans whitespace-nowrap transition-all hover:bg-foreground hover:text-background hover:border-foreground"
+                    >
+                      ↓ Save
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
