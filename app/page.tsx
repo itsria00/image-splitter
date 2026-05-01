@@ -446,7 +446,7 @@ export default function ImageSplitter() {
     if (!cells.length) return
 
     try {
-      // Convert all data URLs to blobs simultaneously
+      // Convert all images to blobs simultaneously
       const blobs = await Promise.all(
         cells.map(async (cell) => {
           const response = await fetch(cell.dataUrl)
@@ -454,73 +454,24 @@ export default function ImageSplitter() {
         })
       )
 
-      // Try to write all items at once (Chrome 104+ supports multiple items)
-      try {
-        const clipboardItems = blobs.map(
-          (blob) => new ClipboardItem({ [blob.type]: blob })
-        )
-        await navigator.clipboard.write(clipboardItems)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-        return
-      } catch {
-        // Fall back to composite image if multiple items not supported
-      }
+      // Create HTML with all images embedded - this allows pasting multiple images
+      const htmlContent = cells
+        .map((cell, i) => `<img src="${cell.dataUrl}" alt="Panel ${i + 1}" />`)
+        .join('\n')
 
-      // Fallback: Create composite image with all panels
-      const firstImg = new Image()
-      firstImg.crossOrigin = "anonymous"
-      
-      await new Promise<void>((resolve) => {
-        firstImg.onload = async () => {
-          const cw = firstImg.width
-          const ch = firstImg.height
-          const L = 4
-          const comp = document.createElement("canvas")
-          comp.width = cw * gridInfo.cols + L * (gridInfo.cols - 1)
-          comp.height = ch * gridInfo.rows + L * (gridInfo.rows - 1)
-          const ctx = comp.getContext("2d")!
-          ctx.fillStyle = "#111"
-          ctx.fillRect(0, 0, comp.width, comp.height)
-
-          await Promise.all(
-            cells.map(
-              (cell) =>
-                new Promise<void>((imgResolve) => {
-                  const cellImg = new Image()
-                  cellImg.crossOrigin = "anonymous"
-                  cellImg.onload = () => {
-                    ctx.drawImage(
-                      cellImg,
-                      cell.col * (cw + L),
-                      cell.row * (ch + L),
-                      cw,
-                      ch
-                    )
-                    imgResolve()
-                  }
-                  cellImg.src = cell.dataUrl
-                })
-            )
-          )
-
-          comp.toBlob(async (blob) => {
-            if (blob) {
-              await navigator.clipboard.write([
-                new ClipboardItem({ [blob.type]: blob }),
-              ])
-              setCopied(true)
-              setTimeout(() => setCopied(false), 2000)
-            }
-            resolve()
-          }, "image/png")
-        }
-        firstImg.src = cells[0].dataUrl
+      // Create a ClipboardItem with both HTML and the first image as fallback
+      const clipboardItem = new ClipboardItem({
+        'text/html': new Blob([htmlContent], { type: 'text/html' }),
+        'image/png': blobs[0]
       })
+
+      await navigator.clipboard.write([clipboardItem])
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error("Failed to copy to clipboard:", err)
     }
-  }, [cells, gridInfo])
+  }, [cells])
 
   const downloadComposite = useCallback(() => {
     if (!cells.length) return
